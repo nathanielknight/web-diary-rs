@@ -1,5 +1,17 @@
 {% extends "base.html" %}
 {% block body %}
-<p>This will be the index.</p>
+<h1>Recent Entries</h1>
+<ul>
+    {% for entry in recent %}
+    <li><a href="/entry/{{entry.id}}">{{entry.timestamp}}</a></li>
+    {% endfor %}
+</ul>
 
+<h1>Entries by Year</h1>
+<ul>
+    {% for (year, count) in year_counts %}
+    <li><a href="/year/{{year}}">{{year}}</a> ({{count}} entries)</li>
+    {% endfor %}
+
+</ul>
 {% endblock %}

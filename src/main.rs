@@ -6,6 +6,7 @@ use axum::{
     http::StatusCode,
     response::{Html, Redirect},
 };
+use chrono::{DateTime, NaiveDate, Utc};
 use log::{error, info, trace};
 use rusqlite;
 
@@ -38,6 +39,58 @@ async fn main() {
 pub(crate) type AppError = (StatusCode, String);
 
 type Response = Result<Html<String>, AppError>;
+
+struct Entry {
+    id: u32,
+    date: NaiveDate,
+    timestamp: DateTime<Utc>,
+    body: String,
+}
+
+struct RawEntry {
+    id: u32,
+    date: String,
+    timestamp: u64,
+    body: String,
+}
+
+impl RawEntry {
+    fn from_row(r: &rusqlite::Row) -> rusqlite::Result<Self> {
+        let entry = RawEntry {
+            id: r.get(0)?,
+            date: r.get(1)?,
+            timestamp: r.get(2)?,
+            body: r.get(3)?,
+        };
+
+        Ok(entry)
+    }
+}
+
+impl TryInto<Entry> for RawEntry {
+    type Error = AppError;
+    fn try_into(self) -> Result<Entry, Self::Error> {
+        use chrono::{LocalResult, TimeZone};
+
+        let timestamp = match Utc.timestamp_opt(self.timestamp as i64, 0) {
+            LocalResult::None | LocalResult::Ambiguous(_, _) => {
+                return Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Invalid timestamp: {}", self.timestamp),
+                ))
+            }
+            LocalResult::Single(t) => t,
+        };
+
+        let entry = Entry {
+            id: self.id,
+            date: NaiveDate::parse_from_str(&self.date, "%Y-%m-%d").map_err(convert_parse_error)?,
+            timestamp,
+            body: self.body,
+        };
+        Ok(entry)
+    }
+}
 
 fn convert_db_error(err: rusqlite::Error) -> AppError {
     use rusqlite::Error;
@@ -92,9 +145,8 @@ fn newapp() -> axum::Router {
 
     /*
     endpoints:
-
-    - read entry (get)
-    - month view
+    - index
+    - year view
     - search / search results
 
     */
@@ -107,17 +159,48 @@ fn newapp() -> axum::Router {
 
 #[derive(Template)]
 #[template(path = "index.html")]
-struct IndexViewModel;
+struct IndexViewModel {
+    recent: Vec<Entry>,
+    year_counts: Vec<(u32, u32)>,
+}
+
+impl Entry {
+    fn recent(count: usize) -> Result<Vec<Entry>, AppError> {
+        let cxn = db_connection()?;
+        const QUERY: &'static str = r#"
+            SELECT rowid, date, timestamp, body
+            FROM entries
+            ORDER BY timestamp DESC
+            LIMIT ?
+        "#;
+        let mut qry = cxn.prepare(QUERY).map_err(convert_db_error)?;
+        let mut entries = Vec::new();
+        let results = qry
+            .query_map([count], RawEntry::from_row)
+            .map_err(convert_db_error)?;
+        for raw in results {
+            let raw = raw.map_err(convert_db_error)?;
+            let entry = raw.try_into()?;
+            entries.push(entry);
+        }
+        Ok(entries)
+    }
+}
 
 async fn get_index() -> Response {
-    let vm = IndexViewModel{};
+    let recent = Entry::recent(8)?;
+    let year_counts = year_counts()?;
+    let vm = IndexViewModel {
+        recent,
+        year_counts,
+    };
     let body = vm.render().map_err(convert_render_error)?;
     Ok(Html::from(body))
 }
 
 #[derive(Template)]
 #[template(path = "new.html")]
-struct NewEntryViewModel;
+struct NewEntryViewModel {}
 
 async fn get_new_entry() -> Response {
     let vm = NewEntryViewModel {};
@@ -135,7 +218,7 @@ async fn post_new_entry(Form(newentry): Form<NewEntry>) -> Result<Redirect, AppE
     let cxn = db_connection()?;
     const CMD: &'static str = r#"
         INSERT INTO entries (timestamp, date, body)
-        VALUES (unixepoch('now'), date('now'), $1)
+        VALUES (unixepoch('now'), date('now', 'localtime'), $1)
         RETURNING rowid
     "#;
     let new_entry_id: u32 = cxn
@@ -148,52 +231,27 @@ async fn post_new_entry(Form(newentry): Form<NewEntry>) -> Result<Redirect, AppE
 #[derive(Template)]
 #[template(path = "entry.html")]
 struct EntryViewModel {
-    date: chrono::NaiveDate,
-    timestamp: chrono::DateTime<chrono::Utc>,
+    date: NaiveDate,
+    timestamp: DateTime<Utc>,
     body: String,
 }
 
 impl EntryViewModel {
     fn fetch(id: u32) -> Result<Self, AppError> {
-        use chrono::{LocalResult, NaiveDate, TimeZone, Utc};
-
         let cxn = db_connection()?;
-        const QUERY: &'static str = "SELECT date, timestamp, body FROM entries WHERE rowid = ?";
-
-        struct RawEntry {
-            date: String,
-            timestamp: u64,
-            body: String,
-        }
+        const QUERY: &'static str =
+            "SELECT rowid, date, timestamp, body FROM entries WHERE rowid = ?";
 
         let raw_entry: RawEntry = cxn
-            .query_row(QUERY, [id], |r| {
-                let entry = RawEntry {
-                    date: r.get(0)?,
-                    timestamp: r.get(1)?,
-                    body: r.get(2)?,
-                };
-                Ok(entry)
-            })
+            .query_row(QUERY, [id], RawEntry::from_row)
             .map_err(convert_db_error)?;
-
-        let timestamp = match Utc.timestamp_opt(raw_entry.timestamp as i64, 0) {
-            LocalResult::None | LocalResult::Ambiguous(_, _) => {
-                return Err((
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("Invalid timestamp: {}", raw_entry.timestamp),
-                ))
-            }
-            LocalResult::Single(t) => t,
+        let entry: Entry = raw_entry.try_into()?;
+        let vm = EntryViewModel {
+            date: entry.date,
+            timestamp: entry.timestamp,
+            body: entry.body,
         };
-
-        let entry = EntryViewModel {
-            date: NaiveDate::parse_from_str(&raw_entry.date, "%Y-%m-%d")
-                .map_err(convert_parse_error)?,
-            timestamp,
-            body: raw_entry.body,
-        };
-        Ok(entry)
+        Ok(vm)
     }
 }
 
@@ -220,3 +278,31 @@ async fn get_entry(Path(rowid): Path<u32>) -> Response {
     Ok(Html(body))
 }
 
+fn year_counts() -> Result<Vec<(u32, u32)>, AppError> {
+    let cxn = db_connection()?;
+    let qry = r#"
+        SELECT
+            strftime('%Y', date) AS year,
+            COUNT(*) as cnt
+        FROM entries
+        GROUP BY year
+        ORDER BY year DESC
+    "#;
+    let mut stmt = cxn.prepare(qry).map_err(convert_db_error)?;
+    let rows = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        .map_err(convert_db_error)?;
+    let mut results = Vec::new();
+    for row in rows {
+        let raw: (String, u32) = row.map_err(convert_db_error)?;
+        let year: u32 = raw.0.parse().map_err(|e| {
+            error!("{:?}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Year parsing error".to_string(),
+            )
+        })?;
+        results.push((year, raw.1));
+    }
+    Ok(results)
+}
