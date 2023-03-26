@@ -8,4 +8,8 @@
 
 {% block body %}
 <div id="editor"></div>
+<form method="POST" action="/new">
+    <textarea name="body"></textarea>
+    <input type="submit" value="Save">
+</form>
 {% endblock %}

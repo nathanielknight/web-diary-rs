@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block head %}
+<title> Diary - {{date}} </title>
+{% endblock %}
+
+{% block body %}
+<p>Date: {{date}}</p>
+<p>Time:: {{timestamp}}</p>
+
+<hr/>
+{{body|safe}}
+{% endblock %}

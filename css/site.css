@@ -1,0 +1,117 @@
+html {
+    font-size: 14px;
+    font-family: -apple-system, BlinkMacSystemFont, avenir next, avenir, segoe ui, helvetica neue, helvetica, Cantarell, Ubuntu, roboto, noto, arial, sans-serif;
+    position: relative;
+    min-height: 100%;
+}
+
+@media (min-width: 768px) {
+    html {
+        font-size: 16px;
+    }
+}
+
+body {
+    margin: 0;
+    padding: 0;
+    max-width: 50em;
+    margin: auto;
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+}
+
+footer,
+header {
+    margin-top: 1rem;
+    text-align: center;
+    font-size: 80%;
+}
+
+main {
+    flex-grow: 1
+}
+
+
+nav {
+    border-bottom: 1px solid gray;
+    padding: 1em;
+}
+
+nav a {
+    color: black;
+    border-radius: 0.2rem;
+    border: 1px solid lightgray;
+    padding: 0.5rem;
+    text-decoration: none;
+}
+
+nav a:hover {
+    color: white;
+    background-color: black;
+}
+
+button,
+input[type=submit] {
+    border-radius: 0.2rem;
+    appearance: none;
+    border-color: black;
+    display: flex;
+}
+
+.cm-editor {
+    margin: 1em 0;
+}
+
+/* Seleted styles from Holiday CSS: https://holidaycss.js.org/ */
+label {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    width: 100%;
+    margin-top: 1rem;
+    padding: 0.3em;
+}
+
+[type=checkbox]+label,
+[type=radio]+label {
+    display: inline-flex;
+    width: unset;
+    vertical-align: auto;
+    margin-right: 1em;
+}
+
+button,
+input,
+optgroup,
+select,
+textarea {
+    font-family: inherit;
+    font-size: 100%;
+    line-height: 1.15;
+    margin: 0
+}
+
+textarea {
+    display: block;
+    width: 100%;
+    min-height: 8em;
+    padding: .5rem
+}
+
+button img {
+    height: 1em;
+}
+
+a.control {
+    text-decoration: none;
+}
+
+button {
+    display: flex;
+    align-items: center;
+}
+
+.item-control a {
+    text-decoration: none;
+}
