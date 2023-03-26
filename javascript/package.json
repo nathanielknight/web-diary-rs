@@ -7,17 +7,12 @@
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
+  "type": "module",
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@milkdown/core": "^7.1.0",
-    "@milkdown/ctx": "^7.1.0",
-    "@milkdown/plugin-history": "^7.1.0",
-    "@milkdown/plugin-listener": "^7.1.0",
-    "@milkdown/preset-commonmark": "^7.1.0",
-    "@milkdown/prose": "^7.1.0",
-    "@milkdown/theme-nord": "^7.1.0",
-    "@milkdown/transformer": "^7.1.0"
+    "@codemirror/lang-markdown": "^6.1.0",
+    "codemirror": "^6.0.1"
   },
   "devDependencies": {
     "esbuild": "^0.17.13"
