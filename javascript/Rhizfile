@@ -1,0 +1,2 @@
+(task "build-scripts"
+  (exec pnpm esbuild new-editor.ts "--format=esm" --bundle "--outfile=../static/new-entry.js"))
