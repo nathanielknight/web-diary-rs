@@ -8,7 +8,10 @@ edition = "2021"
 [dependencies]
 askama = "0.12.0"
 axum = "0.6.12"
+chrono = "0.4.24"
 log = "0.4.17"
 pretty_env_logger = "0.4.0"
 rusqlite = { version = "0.28.0", features = ["chrono", "bundled"] }
+tokio = { version = "1.26.0", features = ["macros", "rt-multi-thread"] }
+tower-http = { version = "0.4.0", features = ["fs"], default-features = false }
 

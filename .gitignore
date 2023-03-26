@@ -1,1 +1,3 @@
 /target
+/static
+*.sqlite3
