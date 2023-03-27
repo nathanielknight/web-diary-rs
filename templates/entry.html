@@ -4,9 +4,15 @@
 {% endblock %}
 
 {% block body %}
-<p>Date: {{date}}</p>
-<p>Time:: {{timestamp}}</p>
+<p>
+    <relative-time datetime="{{timestamp.to_rfc3339()}}" format="datetime" hour="numeric" minute="2-digit">
+        {{timestamp}}
+    </relative-time>
+</p>
+<p class="unobtrusive">
+    Timestamp: {{timestamp}}
+</p>
 
-<hr/>
+<hr />
 {{body|safe}}
 {% endblock %}

@@ -3,7 +3,13 @@
 <h1>Recent Entries</h1>
 <ul>
     {% for entry in recent %}
-    <li><a href="/entry/{{entry.id}}">{{entry.timestamp}}</a></li>
+    <li>
+        <a href="/entry/{{entry.id}}">
+            <relative-time datetime="{{entry.timestamp.to_rfc3339()}}" format="datetime" hour="numeric" minute="2-digit">
+                {{entry.timestamp}}
+            </relative-time>
+        </a>
+    </li>
     {% endfor %}
 </ul>
 

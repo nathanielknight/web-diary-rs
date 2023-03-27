@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+
+{% block searchvalue %}{{query}}{% endblock %}
+
+{% block body %}
+<table>
+    <thead>
+        <tr>
+            <th>Timestamp</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for result in results %}
+        <tr>
+            <td>
+                <a href="/entry/{{result.entry_id}}">
+                    <relative-time datetime="{{result.entry_timestamp.to_rfc3339()}}" format="datetime" hour="numeric"
+                        minute="2-digit">
+                        {{result.entry_timestamp}}
+                    </relative-time>
+                </a>
+            </td>
+            <td>
+                <p>{{result.entry_match}}</p>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}

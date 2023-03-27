@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::{net::SocketAddr, process::exit};
 
 use askama::Template;
@@ -26,6 +27,7 @@ fn newapp() -> axum::Router {
         .route("/new", get(get_new_entry).post(post_new_entry))
         .route("/entry/:rowid", get(get_entry))
         .route("/year/:year", get(get_year))
+        .route("/search", get(get_search))
         .nest_service("/static", get_service(ServeDir::new("./static/")))
 }
 
@@ -62,6 +64,23 @@ struct Entry {
     date: NaiveDate,
     timestamp: DateTime<Utc>,
     body: String,
+}
+
+impl Entry {
+    fn try_fetch(id: u32) -> Result<Self, AppError> {
+        let cxn = db_connection()?;
+        const QUERY: &str = r#"
+            SELECT rowid, date, timestamp, body
+            FROM entries
+            WHERE rowid = ?
+        "#;
+        let mut qry = cxn.prepare(QUERY).map_err(convert_db_error)?;
+        let entry = qry
+            .query_row([&id], RawEntry::from_row)
+            .map_err(convert_db_error)?
+            .try_into()?;
+        Ok(entry)
+    }
 }
 
 struct RawEntry {
@@ -145,15 +164,24 @@ fn db_connection() -> Result<rusqlite::Connection, AppError> {
 }
 
 fn init_db(cxn: &mut rusqlite::Connection) -> rusqlite::Result<()> {
-    const INIT: &str = r##"
-    CREATE TABLE IF NOT EXISTS entries
-    (
-        timestamp INTEGER NOT NULL,
-        date TEXT NOT NULL,
-        body TEXT NOT NULL
-    )
-    "##;
-    cxn.execute(INIT, []).map(|_| ())
+    let init_statements = vec![
+        r##"
+            CREATE TABLE IF NOT EXISTS entries
+            (
+                timestamp INTEGER NOT NULL,
+                date TEXT NOT NULL,
+                body TEXT NOT NULL
+            )
+        "##,
+        r##"
+            CREATE VIRTUAL TABLE IF NOT EXISTS entrytext
+                USING fts5(body)
+        "##,
+    ];
+    for stmt in init_statements {
+        cxn.execute(stmt, [])?;
+    }
+    Ok(())
 }
 
 #[derive(Template)]
@@ -203,9 +231,7 @@ struct NewEntryViewModel {}
 
 async fn get_new_entry() -> Response {
     let vm = NewEntryViewModel {};
-    vm.render()
-        .map_err(convert_render_error)
-        .map(Html::from)
+    vm.render().map_err(convert_render_error).map(Html::from)
 }
 
 #[derive(serde::Deserialize)]
@@ -215,13 +241,18 @@ struct NewEntry {
 
 async fn post_new_entry(Form(newentry): Form<NewEntry>) -> Result<Redirect, AppError> {
     let cxn = db_connection()?;
-    const CMD: &str = r#"
+    const CREATE: &str = r#"
         INSERT INTO entries (timestamp, date, body)
         VALUES (unixepoch('now'), date('now', 'localtime'), $1)
         RETURNING rowid
     "#;
+    const INDEX: &str = r#"
+        INSERT INTO entrytext (body) VALUES ($1)
+    "#;
     let new_entry_id: u32 = cxn
-        .query_row(CMD, [&newentry.body], |r| r.get(0))
+        .query_row(CREATE, [&newentry.body], |r| r.get(0))
+        .map_err(convert_db_error)?;
+    cxn.execute(INDEX, [&newentry.body])
         .map_err(convert_db_error)?;
     let new_item_url = format!("/entry/{}", new_entry_id);
     Ok(Redirect::to(&new_item_url))
@@ -235,22 +266,13 @@ struct EntryViewModel {
     body: String,
 }
 
-impl EntryViewModel {
-    fn fetch(id: u32) -> Result<Self, AppError> {
-        let cxn = db_connection()?;
-        const QUERY: &str =
-            "SELECT rowid, date, timestamp, body FROM entries WHERE rowid = ?";
-
-        let raw_entry: RawEntry = cxn
-            .query_row(QUERY, [id], RawEntry::from_row)
-            .map_err(convert_db_error)?;
-        let entry: Entry = raw_entry.try_into()?;
-        let vm = EntryViewModel {
+impl From<Entry> for EntryViewModel {
+    fn from(entry: Entry) -> Self {
+        EntryViewModel {
             date: entry.date,
             timestamp: entry.timestamp,
             body: entry.body,
-        };
-        Ok(vm)
+        }
     }
 }
 
@@ -258,7 +280,7 @@ async fn get_entry(Path(rowid): Path<u32>) -> Response {
     use ammonia::clean;
     use pulldown_cmark::{html::push_html, Options, Parser};
 
-    let mut entry = EntryViewModel::fetch(rowid)?;
+    let mut entry: EntryViewModel = Entry::try_fetch(rowid)?.into();
 
     let mut unsafe_html = String::new();
     {
@@ -329,7 +351,6 @@ impl Entry {
 impl YearViewModel {
     fn get(year: u32) -> Result<Self, AppError> {
         use chrono::Month;
-        use std::collections::HashMap;
         let cxn = db_connection()?;
         const QUERY: &str = r#"
         SELECT rowid, date, timestamp, body,
@@ -366,6 +387,100 @@ impl YearViewModel {
 
 async fn get_year(Path(year): Path<u32>) -> Response {
     let vm = YearViewModel::get(year)?;
+    let body = vm.render().map_err(convert_render_error)?;
+    Ok(Html(body))
+}
+
+#[derive(Template)]
+#[template(path = "search.html")]
+struct SearchViewModel {
+    query: String,
+    results: Vec<SearchResult>,
+}
+
+struct SearchResult {
+    entry_id: u32,
+    entry_timestamp: DateTime<Utc>,
+    entry_match: String,
+}
+
+impl TryFrom<RawSearchResult> for SearchResult {
+    type Error = AppError;
+
+    fn try_from(raw: RawSearchResult) -> Result<Self, Self::Error> {
+        use chrono::NaiveDateTime;
+        let RawSearchResult {
+            entry_id,
+            entry_timestamp,
+            entry_match,
+        } = raw;
+        let ndt = NaiveDateTime::from_timestamp_opt(entry_timestamp as i64, 0).ok_or((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Timestamp conversion errror".to_owned(),
+        ))?;
+        let entry_timestamp = DateTime::from_utc(ndt, Utc);
+        let result = SearchResult {
+            entry_id,
+            entry_timestamp,
+            entry_match,
+        };
+        Ok(result)
+    }
+}
+
+struct RawSearchResult {
+    entry_id: u32,
+    entry_timestamp: u32,
+    entry_match: String,
+}
+
+impl TryFrom<&rusqlite::Row<'_>> for RawSearchResult {
+    type Error = rusqlite::Error;
+
+    fn try_from(row: &rusqlite::Row) -> Result<Self, Self::Error> {
+        let entry_id = row.get(0)?;
+        let entry_timestamp = row.get(1)?;
+        let entry_match = row.get(2)?;
+
+        let result = RawSearchResult {
+            entry_id,
+            entry_timestamp,
+            entry_match,
+        };
+        Ok(result)
+    }
+}
+
+async fn get_search(Query(query_args): Query<HashMap<String, String>>) -> Response {
+    let cxn = db_connection()?;
+    const QUERY: &str = r#"
+        SELECT entries.rowid, entries.timestamp, snippet(entrytext, 0, '', '', '...', 32)
+        FROM entrytext
+        JOIN entries ON entrytext.rowid = entries.rowid
+        WHERE entrytext MATCH ?
+        ORDER BY timestamp DESC
+    "#;
+    let qry = query_args.get("q");
+    info!("Search for: {:?}", qry);
+    let results: Vec<SearchResult> = if let Some(qry) = qry {
+        let mut stmt = cxn.prepare(QUERY).map_err(convert_db_error)?;
+        let raw_results = stmt
+            .query_map([qry], |r| r.try_into())
+            .map_err(convert_db_error)?;
+        let mut results = Vec::new();
+        for raw in raw_results {
+            let result: RawSearchResult = raw.map_err(convert_db_error)?;
+            results.push(result.try_into()?);
+        }
+        results
+    } else {
+        Vec::new()
+    };
+    dbg!("Found {} results", results.len());
+    let vm = SearchViewModel {
+        results,
+        query: qry.map(Clone::clone).unwrap_or_default(),
+    };
     let body = vm.render().map_err(convert_render_error)?;
     Ok(Html(body))
 }

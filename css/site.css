@@ -72,6 +72,19 @@ input[type=submit] {
     margin: 1em 0;
 }
 
+.unobtrusive {
+    font-size: 75%;
+}
+
+th, td {
+    border: 1px solid gray;
+    padding: 0.2em 0.4em;
+}
+
+table {
+    border-collapse: collapse;
+}
+
 /* Seleted styles from Holiday CSS: https://holidaycss.js.org/ */
 label {
     display: flex;
