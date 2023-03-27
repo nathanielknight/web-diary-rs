@@ -33,12 +33,16 @@ main {
 }
 
 
-nav {
+header {
     border-bottom: 1px solid gray;
     padding: 1em;
+    display: flex;
+    flex-direction: row;
+    justify-content: space-between;
+    font-size: 130%;
 }
 
-nav a {
+header a {
     color: black;
     border-radius: 0.2rem;
     border: 1px solid lightgray;
@@ -46,9 +50,14 @@ nav a {
     text-decoration: none;
 }
 
-nav a:hover {
+header a:hover {
     color: white;
     background-color: black;
+}
+
+#search {
+    display: flex;
+    flex-direction: row;
 }
 
 button,

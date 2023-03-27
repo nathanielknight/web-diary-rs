@@ -14,10 +14,17 @@
 </head>
 
 <body>
-    <nav>
-        <a href="/">Index</a>
-        <a href="/new">New Entry</a>
-    </nav>
+    <header>
+        <nav>
+            <a href="/">Index</a>
+            <a href="/new">New Entry</a>
+        </nav>
+        <form id="search" action="/search" method="get">
+            <input type="text" name="q">
+            <input type="submit" value="search">
+        </form>
+
+    </header>
     <main>{% block body %}{% endblock %}</main>
     <footer>A web tool by <a href="https://nathanielknight.ca">Nat Knight ♘</a></footer>
 </body>
