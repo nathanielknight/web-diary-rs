@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+
+{%block head %}
+<title>Diary - {{year}}</title>
+{% endblock %}
+
+{% block body %}
+<h1>{{year}}</h1>
+
+<p>{{entry_count}} entries.</p>
+
+{% for (month, entries) in months %}
+
+<h2>{{month.name()}}</h2>
+
+<ul>
+    {% for entry in entries %}
+    <li>
+        <a href="/entry/{{entry.id}}">{{entry.timestamp}}</a>
+    </li>
+    {% endfor %}
+</ul>
+
+{% endfor %}
+{% endblock %}

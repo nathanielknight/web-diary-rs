@@ -12,6 +12,24 @@ use rusqlite;
 
 const DBPATH: &'static str = "diary.sqlite3";
 
+fn newapp() -> axum::Router {
+    use axum::routing::{get, get_service, Router};
+    use tower_http::services::ServeDir;
+
+    /*
+    endpoints:
+    - year view
+    - search / search results
+
+    */
+    Router::new()
+        .route("/", get(get_index))
+        .route("/new", get(get_new_entry).post(post_new_entry))
+        .route("/entry/:rowid", get(get_entry))
+        .route("/year/:year", get(get_year))
+        .nest_service("/static", get_service(ServeDir::new("./static/")))
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     pretty_env_logger::init();
@@ -137,24 +155,6 @@ fn init_db(cxn: &mut rusqlite::Connection) -> rusqlite::Result<()> {
     )
     "##;
     cxn.execute(INIT, []).map(|_| ())
-}
-
-fn newapp() -> axum::Router {
-    use axum::routing::{get, get_service, Router};
-    use tower_http::services::ServeDir;
-
-    /*
-    endpoints:
-    - index
-    - year view
-    - search / search results
-
-    */
-    Router::new()
-        .route("/", get(get_index))
-        .route("/new", get(get_new_entry).post(post_new_entry))
-        .route("/entry/:rowid", get(get_entry))
-        .nest_service("/static", get_service(ServeDir::new("./static/")))
 }
 
 #[derive(Template)]
@@ -305,4 +305,68 @@ fn year_counts() -> Result<Vec<(u32, u32)>, AppError> {
         results.push((year, raw.1));
     }
     Ok(results)
+}
+
+#[derive(Template)]
+#[template(path = "year.html")]
+struct YearViewModel {
+    year: u32,
+    months: Vec<(chrono::Month, Vec<Entry>)>,
+    entry_count: u32,
+}
+
+impl Entry {
+    fn month(&self) -> Result<chrono::Month, AppError> {
+        use chrono::prelude::*;
+        use num_traits::FromPrimitive;
+
+        Month::from_u32(self.timestamp.month()).ok_or((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Date conversion error".to_string(),
+        ))
+    }
+}
+
+impl YearViewModel {
+    fn get(year: u32) -> Result<Self, AppError> {
+        use chrono::Month;
+        use std::collections::HashMap;
+        let cxn = db_connection()?;
+        const QUERY: &'static str = r#"
+        SELECT rowid, date, timestamp, body,
+            strftime('%Y', date) as year, strftime('%m', date) as month
+        FROM entries
+        WHERE ? = CAST(year AS INTEGER)
+        ORDER BY month
+        "#;
+        let mut qry = cxn.prepare(QUERY).map_err(convert_db_error)?;
+        let mut entries: HashMap<chrono::Month, Vec<Entry>> = HashMap::new();
+        let results = qry
+            .query_map([year], RawEntry::from_row)
+            .map_err(convert_db_error)?;
+        let mut entry_count = 0;
+        for raw in results {
+            let raw = raw.map_err(convert_db_error)?;
+            let entry: Entry = raw.try_into()?;
+            let month = entry.month()?;
+            if let Some(month_list) = entries.get_mut(&month) {
+                month_list.push(entry);
+            } else {
+                entries.insert(month, vec![entry]);
+            }
+            entry_count += 1;
+        }
+        let months: Vec<(Month, Vec<Entry>)> = entries.into_iter().collect();
+        Ok(YearViewModel {
+            year,
+            months,
+            entry_count,
+        })
+    }
+}
+
+async fn get_year(Path(year): Path<u32>) -> Response {
+    let vm = YearViewModel::get(year)?;
+    let body = vm.render().map_err(convert_render_error)?;
+    Ok(Html(body))
 }
