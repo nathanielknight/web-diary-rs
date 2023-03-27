@@ -8,9 +8,8 @@ use axum::{
 };
 use chrono::{DateTime, NaiveDate, Utc};
 use log::{error, info, trace};
-use rusqlite;
 
-const DBPATH: &'static str = "diary.sqlite3";
+const DBPATH: &str = "diary.sqlite3";
 
 fn newapp() -> axum::Router {
     use axum::routing::{get, get_service, Router};
@@ -146,7 +145,7 @@ fn db_connection() -> Result<rusqlite::Connection, AppError> {
 }
 
 fn init_db(cxn: &mut rusqlite::Connection) -> rusqlite::Result<()> {
-    const INIT: &'static str = r##"
+    const INIT: &str = r##"
     CREATE TABLE IF NOT EXISTS entries
     (
         timestamp INTEGER NOT NULL,
@@ -167,7 +166,7 @@ struct IndexViewModel {
 impl Entry {
     fn recent(count: usize) -> Result<Vec<Entry>, AppError> {
         let cxn = db_connection()?;
-        const QUERY: &'static str = r#"
+        const QUERY: &str = r#"
             SELECT rowid, date, timestamp, body
             FROM entries
             ORDER BY timestamp DESC
@@ -206,7 +205,7 @@ async fn get_new_entry() -> Response {
     let vm = NewEntryViewModel {};
     vm.render()
         .map_err(convert_render_error)
-        .map(|b| Html::from(b))
+        .map(Html::from)
 }
 
 #[derive(serde::Deserialize)]
@@ -216,7 +215,7 @@ struct NewEntry {
 
 async fn post_new_entry(Form(newentry): Form<NewEntry>) -> Result<Redirect, AppError> {
     let cxn = db_connection()?;
-    const CMD: &'static str = r#"
+    const CMD: &str = r#"
         INSERT INTO entries (timestamp, date, body)
         VALUES (unixepoch('now'), date('now', 'localtime'), $1)
         RETURNING rowid
@@ -239,7 +238,7 @@ struct EntryViewModel {
 impl EntryViewModel {
     fn fetch(id: u32) -> Result<Self, AppError> {
         let cxn = db_connection()?;
-        const QUERY: &'static str =
+        const QUERY: &str =
             "SELECT rowid, date, timestamp, body FROM entries WHERE rowid = ?";
 
         let raw_entry: RawEntry = cxn
@@ -268,7 +267,7 @@ async fn get_entry(Path(rowid): Path<u32>) -> Response {
         let md_parse = Parser::new_ext(&entry.body, options);
         push_html(&mut unsafe_html, md_parse);
     }
-    let safe_html = clean(&*unsafe_html);
+    let safe_html = clean(&unsafe_html);
     entry.body = safe_html;
 
     let body = entry.render().map_err(|e| {
@@ -332,7 +331,7 @@ impl YearViewModel {
         use chrono::Month;
         use std::collections::HashMap;
         let cxn = db_connection()?;
-        const QUERY: &'static str = r#"
+        const QUERY: &str = r#"
         SELECT rowid, date, timestamp, body,
             strftime('%Y', date) as year, strftime('%m', date) as month
         FROM entries
