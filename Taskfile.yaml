@@ -1,0 +1,31 @@
+# https://taskfile.dev
+
+version: '3'
+
+tasks:
+  default:
+    internal: true
+    cmds:
+      - task --list-all
+
+  build-editor:
+    dir: editor
+    cmds:
+      - pnpm esbuild new-entry.ts --bundle --outfile=../static/new-entry.js
+
+  check-editor:
+    dir: editor
+    cmds:
+      - tsc --noEmit
+
+  check:
+    deps: [check-editor]
+    cmds: 
+      - cargo clippy
+
+  build:
+    deps: [build-editor]
+    cmds:
+      - cargo build
+      - cp css/* static/
+      - cp javascript/* static/
