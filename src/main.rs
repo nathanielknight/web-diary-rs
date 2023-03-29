@@ -381,7 +381,11 @@ impl YearViewModel {
             }
             entry_count += 1;
         }
-        let months: Vec<(Month, Vec<Entry>)> = entries.into_iter().collect();
+        let mut months: Vec<(Month, Vec<Entry>)> = entries.into_iter().collect();
+        months.sort_by(|(a, _), (b, _)| a.number_from_month().cmp(&b.number_from_month()));
+        for (_, month) in months.iter_mut() {
+            month.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+        }
         Ok(YearViewModel {
             year,
             months,
