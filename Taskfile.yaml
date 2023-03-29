@@ -6,26 +6,62 @@ tasks:
   default:
     internal: true
     cmds:
-      - task --list-all
+      - task --list
 
-  build-editor:
-    dir: editor
-    cmds:
-      - pnpm esbuild new-entry.ts --bundle --outfile=../static/new-entry.js
-
+# Checks
   check-editor:
     dir: editor
     cmds:
       - tsc --noEmit
-
-  check:
-    deps: [check-editor]
-    cmds: 
-      - cargo clippy
-
-  build:
-    deps: [build-editor]
+    
+  check-server:
     cmds:
-      - cargo build
-      - cp css/* static/
-      - cp javascript/* static/
+      - cargo fmt --check
+      - cargo clippy
+  
+  check:
+    desc: Run TypeScript, Rust, and formatting checks.
+    deps:
+      - check-editor
+      - check-server
+
+# Release Builds
+  build-editor:
+    dir: editor
+    cmds:
+      - pnpm esbuild new-entry.ts --bundle --outfile=../static/new-entry.js
+  
+  build-static:
+    deps:
+      - build-editor
+    cmds:
+      - cp -v assets/* static/
+      - brotli -fk static/*
+  
+  build-server:
+    cmds:
+      - cargo build --release
+  
+  build:
+    desc: Create a release build
+    deps:
+      - build-editor
+      - build-static
+      - build-server
+
+
+# Watches
+
+  watch-server:
+    cmds:
+      - "find src/ templates/ Cargo.toml | entr -r cargo run"
+  
+  watch-static:
+    cmds:
+      - "find static/ -type f | entr task build-static"
+
+  watch:
+    desc: Watch static files, the CodeMirror editor, and the Rust server for changes.
+    deps:
+      - watch-server
+      - watch-static
