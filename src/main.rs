@@ -15,6 +15,7 @@ const DBPATH: &str = "diary.sqlite3";
 fn newapp() -> axum::Router {
     use axum::routing::{get, get_service, Router};
     use tower_http::services::ServeDir;
+    use tower_http::trace::TraceLayer;
 
     /*
     endpoints:
@@ -28,7 +29,11 @@ fn newapp() -> axum::Router {
         .route("/entry/:rowid", get(get_entry))
         .route("/year/:year", get(get_year))
         .route("/search", get(get_search))
-        .nest_service("/static", get_service(ServeDir::new("./static/")))
+        .nest_service(
+            "/static",
+            get_service(ServeDir::new("./static/").precompressed_br()),
+        )
+        .layer(TraceLayer::new_for_http())
 }
 
 #[tokio::main(flavor = "current_thread")]
