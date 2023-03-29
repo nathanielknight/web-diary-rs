@@ -1,3 +1,4 @@
 /target
 /static
 *.sqlite3
+__pycache__/
