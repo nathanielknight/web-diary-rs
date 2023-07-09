@@ -36,6 +36,7 @@ tasks:
       - build-editor
     cmds:
       - cp -v assets/* static/
+      - rm -f static/*.br
       - brotli -fk static/*
   
   build-server:
