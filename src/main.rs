@@ -263,14 +263,23 @@ struct EntryViewModel {
     date: NaiveDate,
     timestamp: DateTime<Utc>,
     body: String,
+    text_hash: String,
 }
 
 impl From<Entry> for EntryViewModel {
     fn from(entry: Entry) -> Self {
+        use sha2::{Digest, Sha256};
+
+        let mut hasher = Sha256::new();
+        hasher.update(&entry.body);
+        let hash_bytes = hasher.finalize();
+        let text_hash = hex::encode(hash_bytes);
+
         EntryViewModel {
             date: entry.date,
             timestamp: entry.timestamp,
             body: entry.body,
+            text_hash,
         }
     }
 }
