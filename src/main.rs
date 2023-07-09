@@ -17,12 +17,6 @@ fn newapp() -> axum::Router {
     use tower_http::services::ServeDir;
     use tower_http::trace::TraceLayer;
 
-    /*
-    endpoints:
-    - year view
-    - search / search results
-
-    */
     Router::new()
         .route("/", get(get_index))
         .route("/new", get(get_new_entry).post(post_new_entry))
