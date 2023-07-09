@@ -1,31 +1,27 @@
 html {
-    font-size: 14px;
     font-family: -apple-system, BlinkMacSystemFont, avenir next, avenir, segoe ui, helvetica neue, helvetica, Cantarell, Ubuntu, roboto, noto, arial, sans-serif;
     position: relative;
     min-height: 100%;
+    font-size: clamp(10pt, 2vw, 14pt);
 }
 
-@media (min-width: 768px) {
-    html {
-        font-size: 16px;
-    }
-}
+
 
 body {
     margin: 0;
-    padding: 0;
-    max-width: 50em;
+    padding: 0 0.7em;
+    max-width: 40em;
     margin: auto;
     display: flex;
     flex-direction: column;
+    justify-content: space-between;
     min-height: 100vh;
 }
 
-footer,
-header {
+footer {
     margin-top: 1rem;
-    text-align: center;
     font-size: 80%;
+    text-align: center;
 }
 
 main {
@@ -39,7 +35,8 @@ header {
     display: flex;
     flex-direction: row;
     justify-content: space-between;
-    font-size: 130%;
+    flex-wrap: wrap;
+    font-size: 120%;
 }
 
 header a {
@@ -48,6 +45,7 @@ header a {
     border: 1px solid lightgray;
     padding: 0.5rem;
     text-decoration: none;
+    display: inline-block;
 }
 
 header a:hover {
@@ -76,7 +74,8 @@ input[type=submit] {
     font-size: 75%;
 }
 
-th, td {
+th,
+td {
     border: 1px solid gray;
     padding: 0.2em 0.4em;
 }
@@ -129,7 +128,8 @@ a.control {
     text-decoration: none;
 }
 
-button {
+button,
+input[type=submit] {
     display: flex;
     align-items: center;
 }
