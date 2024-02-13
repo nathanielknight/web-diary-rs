@@ -1,18 +1,14 @@
 import { basicSetup, EditorView } from "codemirror";
 import { markdown } from "@codemirror/lang-markdown";
 
-const docHashKey = "web-diary-rs-draft-doc-hash"
-const docKey = "web-diary-rs-draft-doc";
-const storage = window.localStorage;
-
 function setup() {
     let textarea = document.querySelector('textarea');
-    if (textarea == null) {
+    if (textarea === null) {
         return;
     }
 
     let view = new EditorView({
-        doc: storage.getItem(docKey) ?? '',
+        doc: textarea.value,
         extensions: [
             EditorView.lineWrapping,
             basicSetup,
@@ -24,25 +20,36 @@ function setup() {
     if (textarea.parentElement == null) {
         return;
     }
+    setInterval(() => saveDraft(view), 6000);
+
     textarea.parentElement.onsubmit = () => {
         if (textarea != null) {
             const text = (view.state.doc as unknown) as string;
             textarea.value = text;
-            setTimeout(() => storeTextHash(text), 1);
         }
     }
 }
 
-async function storeTextHash(text: string): Promise<void> {
-    const textBytes = (new TextEncoder()).encode(text);
-    const digest = await crypto.subtle.digest("SHA-256", textBytes);
-    const digestBytes = new Uint8Array(digest);
-    const digestString = Array.from(digestBytes).map((b) => {
-        let s = b.toString(16);
-        return b < 0x10 ? '0' + s : s;
-    }).join('');
-    storage.setItem(docHashKey, digestString);
-    storage.setItem(docKey, text);
+let savedDraft = "";
+
+async function saveDraft(view: EditorView): Promise<void> {
+    const draft = (view.state.doc as unknown) as string;
+    const formData = new URLSearchParams();
+    formData.append("body", draft);
+    if (draft == savedDraft) {
+        return
+    } else {
+        const result = await fetch("/draft", {
+            method: "post",
+            body: formData.toString(),
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+            },
+        });
+        if (result.ok) {
+            savedDraft = draft;
+        }
+    }
 }
 
 setup();

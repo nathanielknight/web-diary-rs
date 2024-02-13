@@ -15,17 +15,5 @@
 
 <hr />
 
-<script>
-    let entryHash = "{{text_hash}}";
-    const docHashKey = "web-diary-rs-draft-doc-hash"
-    const docKey = "web-diary-rs-draft-doc";
-    const storage = window.localStorage;
-
-    const storedHash = storage.getItem(docHashKey);
-    if (storedHash != null && storedHash == entryHash) {
-        storage.removeItem(docHashKey);
-        storage.removeItem(docKey);
-    }
-</script>
 {{body|safe}}
 {% endblock %}

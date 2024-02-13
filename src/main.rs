@@ -9,17 +9,19 @@ use axum::{
 };
 use chrono::{DateTime, NaiveDate, Utc};
 use log::{error, info, trace};
+use rusqlite::{Connection, OptionalExtension};
 
 const DBPATH: &str = "diary.sqlite3";
 
 fn newapp() -> axum::Router {
-    use axum::routing::{get, get_service, Router};
+    use axum::routing::{get, get_service, post, Router};
     use tower_http::services::ServeDir;
     use tower_http::trace::TraceLayer;
 
     Router::new()
         .route("/", get(get_index))
         .route("/new", get(get_new_entry).post(post_new_entry))
+        .route("/draft", post(post_draft))
         .route("/entry/:rowid", get(get_entry))
         .route("/year/:year", get(get_year))
         .route("/search", get(get_search))
@@ -176,6 +178,12 @@ fn init_db(cxn: &mut rusqlite::Connection) -> rusqlite::Result<()> {
             CREATE VIRTUAL TABLE IF NOT EXISTS entrytext
                 USING fts5(body)
         "##,
+        r##"
+            CREATE TABLE IF NOT EXISTS draft
+            (
+                draft TEXT NOT NULL
+            )
+        "##,
     ];
     for stmt in init_statements {
         cxn.execute(stmt, [])?;
@@ -226,10 +234,14 @@ async fn get_index() -> Response {
 
 #[derive(Template)]
 #[template(path = "new.html")]
-struct NewEntryViewModel {}
+struct NewEntryViewModel {
+    draft: String,
+}
 
 async fn get_new_entry() -> Response {
-    let vm = NewEntryViewModel {};
+    let mut cxn = db_connection()?;
+    let draft = get_draft(&mut cxn)?.unwrap_or_else(String::new);
+    let vm = NewEntryViewModel { draft };
     vm.render().map_err(convert_render_error).map(Html::from)
 }
 
@@ -239,7 +251,7 @@ struct NewEntry {
 }
 
 async fn post_new_entry(Form(newentry): Form<NewEntry>) -> Result<Redirect, AppError> {
-    let cxn = db_connection()?;
+    let mut cxn = db_connection()?;
     const CREATE: &str = r#"
         INSERT INTO entries (timestamp, date, body)
         VALUES (unixepoch('now'), date('now', 'localtime'), $1)
@@ -253,6 +265,7 @@ async fn post_new_entry(Form(newentry): Form<NewEntry>) -> Result<Redirect, AppE
         .map_err(convert_db_error)?;
     cxn.execute(INDEX, [&newentry.body])
         .map_err(convert_db_error)?;
+    clear_draft(&mut cxn)?;
     let new_item_url = format!("/entry/{}", new_entry_id);
     Ok(Redirect::to(&new_item_url))
 }
@@ -263,23 +276,14 @@ struct EntryViewModel {
     date: NaiveDate,
     timestamp: DateTime<Utc>,
     body: String,
-    text_hash: String,
 }
 
 impl From<Entry> for EntryViewModel {
     fn from(entry: Entry) -> Self {
-        use sha2::{Digest, Sha256};
-
-        let mut hasher = Sha256::new();
-        hasher.update(&entry.body);
-        let hash_bytes = hasher.finalize();
-        let text_hash = hex::encode(hash_bytes);
-
         EntryViewModel {
             date: entry.date,
             timestamp: entry.timestamp,
             body: entry.body,
-            text_hash,
         }
     }
 }
@@ -491,8 +495,41 @@ async fn get_search(Query(query_args): Query<HashMap<String, String>>) -> Respon
     dbg!("Found {} results", results.len());
     let vm = SearchViewModel {
         results,
-        query: qry.map(Clone::clone).unwrap_or_default(),
+        query: qry.cloned().unwrap_or_default(),
     };
     let body = vm.render().map_err(convert_render_error)?;
     Ok(Html(body))
+}
+
+#[derive(serde::Deserialize)]
+struct Draft {
+    body: String,
+}
+
+async fn post_draft(Form(draft): Form<Draft>) -> Result<String, AppError> {
+    let mut cxn = db_connection()?;
+    const CREATE: &str = r#"
+        INSERT INTO draft (draft) VALUES ($1)
+    "#;
+    clear_draft(&mut cxn)?;
+    cxn.execute(CREATE, [&draft.body])
+        .map_err(convert_db_error)?;
+    Ok(String::from("Saved"))
+}
+
+fn clear_draft(cxn: &mut Connection) -> Result<(), AppError> {
+    const TRUNCATE: &str = r#"
+        DELETE FROM draft
+    "#;
+    cxn.execute(TRUNCATE, []).map_err(convert_db_error)?;
+    Ok(())
+}
+
+fn get_draft(cxn: &mut Connection) -> Result<Option<String>, AppError> {
+    const GET: &str = r#"
+        SELECT draft FROM draft LIMIT 1
+    "#;
+    cxn.query_row(GET, [], |r| r.get(0))
+        .optional()
+        .map_err(convert_db_error)
 }
