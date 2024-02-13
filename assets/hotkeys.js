@@ -16,7 +16,6 @@ function goto(path) {
 }
 
 function handleHotkey(evt) {
-    console.log(evt);
     if (evt.key === 'Escape') {
         // This lets you escape and access the other hotkey.
         document.activeElement.blur();
@@ -28,7 +27,6 @@ function handleHotkey(evt) {
     }
     const handler = hotkeys[evt.key];
     if (handler != undefined) {
-        console.log(`handler for ${evt.key}`)
         handler(evt);
     }
 }
