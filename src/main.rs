@@ -1,22 +1,75 @@
-use std::collections::HashMap;
-use std::{net::SocketAddr, process::exit};
+use std::{
+    collections::HashMap,
+    net::SocketAddr,
+    sync::{Arc, Mutex},
+};
 
 use askama::Template;
 use axum::{
-    extract::{Form, Path, Query},
+    extract::{Extension, Form, Path, Query},
     http::StatusCode,
     response::{Html, Redirect},
 };
 use chrono::{DateTime, NaiveDate, Utc};
-use log::{error, info, trace};
+use log::{error, info};
 use rusqlite::{Connection, OptionalExtension};
 
-const DBPATH: &str = "diary.sqlite3";
+#[tokio::main(flavor = "current_thread")]
+async fn main() {
+    pretty_env_logger::init();
+    info!("Initializing");
+    {}
+    const DBPATH: &str = "diary.sqlite3";
+    const HOST: &str = "0.0.0.0";
+    const PORT: u16 = 62336;
 
-fn newapp() -> axum::Router {
+    let addr = SocketAddr::new(HOST.parse().unwrap(), PORT);
+    let cxn = connect_and_init_db(DBPATH).expect("Error initializing database.");
+    let app = newapp(cxn);
+    info!("Listening on {}", addr);
+    // TODO static files
+    axum::Server::bind(&addr)
+        .serve(app.into_make_service())
+        .await
+        .expect("Failed to start server");
+}
+
+fn connect_and_init_db(dbpath: &str) -> Result<rusqlite::Connection, String> {
+    let cxn = rusqlite::Connection::open(dbpath)
+        .map_err(|e| format!("Couldn't open database: {:?}", e))?;
+    let init_statements = vec![
+        r##"
+            CREATE TABLE IF NOT EXISTS entries
+            (
+                timestamp INTEGER NOT NULL,
+                date TEXT NOT NULL,
+                body TEXT NOT NULL
+            )
+        "##,
+        r##"
+            CREATE VIRTUAL TABLE IF NOT EXISTS entrytext
+                USING fts5(body)
+        "##,
+        r##"
+            CREATE TABLE IF NOT EXISTS draft
+            (
+                draft TEXT NOT NULL
+            )
+        "##,
+    ];
+    for stmt in init_statements {
+        cxn.execute(stmt, [])
+            .map_err(|e| format!("Error initializing database: {:?}", e))?;
+    }
+    Ok(cxn)
+}
+
+fn newapp(cxn: rusqlite::Connection) -> axum::Router {
     use axum::routing::{get, get_service, post, Router};
     use tower_http::services::ServeDir;
     use tower_http::trace::TraceLayer;
+
+    let cxn_arcmut = Arc::new(Mutex::new(cxn));
 
     Router::new()
         .route("/", get(get_index))
@@ -30,30 +83,7 @@ fn newapp() -> axum::Router {
             get_service(ServeDir::new("./static/").precompressed_br()),
         )
         .layer(TraceLayer::new_for_http())
-}
-
-#[tokio::main(flavor = "current_thread")]
-async fn main() {
-    pretty_env_logger::init();
-    info!("Initializing");
-    {
-        let mut cxn = db_connection().expect("couldn't connect to database");
-        match init_db(&mut cxn) {
-            Ok(()) => (),
-            Err(e) => {
-                error!("Error during database initialization {:?}", e);
-                exit(1);
-            }
-        }
-    }
-    let addr = SocketAddr::new("0.0.0.0".parse().unwrap(), 62336);
-    let app = newapp();
-    info!("Listening on {}", addr);
-    // TODO static files
-    axum::Server::bind(&addr)
-        .serve(app.into_make_service())
-        .await
-        .expect("Failed to start server");
+        .layer(Extension(cxn_arcmut))
 }
 
 pub(crate) type AppError = (StatusCode, String);
@@ -68,8 +98,7 @@ struct Entry {
 }
 
 impl Entry {
-    fn try_fetch(id: u32) -> Result<Self, AppError> {
-        let cxn = db_connection()?;
+    fn try_fetch(cxn: &mut rusqlite::Connection, id: u32) -> Result<Self, AppError> {
         const QUERY: &str = r#"
             SELECT rowid, date, timestamp, body
             FROM entries
@@ -157,40 +186,6 @@ fn convert_render_error(err: askama::Error) -> AppError {
     )
 }
 
-fn db_connection() -> Result<rusqlite::Connection, AppError> {
-    use std::path;
-    trace!("Connecting to database at {}", DBPATH);
-    let db_path = path::Path::new(DBPATH);
-    rusqlite::Connection::open(db_path).map_err(convert_db_error)
-}
-
-fn init_db(cxn: &mut rusqlite::Connection) -> rusqlite::Result<()> {
-    let init_statements = vec![
-        r##"
-            CREATE TABLE IF NOT EXISTS entries
-            (
-                timestamp INTEGER NOT NULL,
-                date TEXT NOT NULL,
-                body TEXT NOT NULL
-            )
-        "##,
-        r##"
-            CREATE VIRTUAL TABLE IF NOT EXISTS entrytext
-                USING fts5(body)
-        "##,
-        r##"
-            CREATE TABLE IF NOT EXISTS draft
-            (
-                draft TEXT NOT NULL
-            )
-        "##,
-    ];
-    for stmt in init_statements {
-        cxn.execute(stmt, [])?;
-    }
-    Ok(())
-}
-
 #[derive(Template)]
 #[template(path = "index.html")]
 struct IndexViewModel {
@@ -199,8 +194,7 @@ struct IndexViewModel {
 }
 
 impl Entry {
-    fn recent(count: usize) -> Result<Vec<Entry>, AppError> {
-        let cxn = db_connection()?;
+    fn recent(cxn: &mut rusqlite::Connection, count: usize) -> Result<Vec<Entry>, AppError> {
         const QUERY: &str = r#"
             SELECT rowid, date, timestamp, body
             FROM entries
@@ -221,9 +215,23 @@ impl Entry {
     }
 }
 
-async fn get_index() -> Response {
-    let recent = Entry::recent(8)?;
-    let year_counts = year_counts()?;
+type ConnectionArcMux = Arc<Mutex<rusqlite::Connection>>;
+
+fn lock_db(
+    cxn_arcmux: &ConnectionArcMux,
+) -> std::result::Result<std::sync::MutexGuard<rusqlite::Connection>, AppError> {
+    cxn_arcmux.lock().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Couldn't lock the item repo: {:?}", e),
+        )
+    })
+}
+
+async fn get_index(Extension(cxn_arcmux): Extension<ConnectionArcMux>) -> Response {
+    let mut cxn = lock_db(&cxn_arcmux)?;
+    let recent = Entry::recent(&mut cxn, 8)?;
+    let year_counts = year_counts(&mut cxn)?;
     let vm = IndexViewModel {
         recent,
         year_counts,
@@ -238,8 +246,8 @@ struct NewEntryViewModel {
     draft: String,
 }
 
-async fn get_new_entry() -> Response {
-    let mut cxn = db_connection()?;
+async fn get_new_entry(Extension(cxn_arcmux): Extension<ConnectionArcMux>) -> Response {
+    let mut cxn = lock_db(&cxn_arcmux)?;
     let draft = get_draft(&mut cxn)?.unwrap_or_else(String::new);
     let vm = NewEntryViewModel { draft };
     vm.render().map_err(convert_render_error).map(Html::from)
@@ -250,8 +258,11 @@ struct NewEntry {
     body: String,
 }
 
-async fn post_new_entry(Form(newentry): Form<NewEntry>) -> Result<Redirect, AppError> {
-    let mut cxn = db_connection()?;
+async fn post_new_entry(
+    Extension(cxn_arcmux): Extension<ConnectionArcMux>,
+    Form(newentry): Form<NewEntry>,
+) -> Result<Redirect, AppError> {
+    let mut cxn = lock_db(&cxn_arcmux)?;
     const CREATE: &str = r#"
         INSERT INTO entries (timestamp, date, body)
         VALUES (unixepoch('now'), date('now', 'localtime'), $1)
@@ -288,11 +299,15 @@ impl From<Entry> for EntryViewModel {
     }
 }
 
-async fn get_entry(Path(rowid): Path<u32>) -> Response {
+async fn get_entry(
+    Extension(cxn_arcmux): Extension<ConnectionArcMux>,
+    Path(rowid): Path<u32>,
+) -> Response {
     use ammonia::clean;
     use pulldown_cmark::{html::push_html, Options, Parser};
 
-    let mut entry: EntryViewModel = Entry::try_fetch(rowid)?.into();
+    let mut cxn = lock_db(&cxn_arcmux)?;
+    let mut entry: EntryViewModel = Entry::try_fetch(&mut cxn, rowid)?.into();
 
     let mut unsafe_html = String::new();
     {
@@ -311,8 +326,7 @@ async fn get_entry(Path(rowid): Path<u32>) -> Response {
     Ok(Html(body))
 }
 
-fn year_counts() -> Result<Vec<(u32, u32)>, AppError> {
-    let cxn = db_connection()?;
+fn year_counts(cxn: &mut rusqlite::Connection) -> Result<Vec<(u32, u32)>, AppError> {
     let qry = r#"
         SELECT
             strftime('%Y', date) AS year,
@@ -361,9 +375,8 @@ impl Entry {
 }
 
 impl YearViewModel {
-    fn get(year: u32) -> Result<Self, AppError> {
+    fn get(cxn: &mut rusqlite::Connection, year: u32) -> Result<Self, AppError> {
         use chrono::Month;
-        let cxn = db_connection()?;
         const QUERY: &str = r#"
         SELECT rowid, date, timestamp, body,
             strftime('%Y', date) as year, strftime('%m', date) as month
@@ -401,8 +414,12 @@ impl YearViewModel {
     }
 }
 
-async fn get_year(Path(year): Path<u32>) -> Response {
-    let vm = YearViewModel::get(year)?;
+async fn get_year(
+    Extension(cxn_arcmux): Extension<ConnectionArcMux>,
+    Path(year): Path<u32>,
+) -> Response {
+    let mut cxn = lock_db(&cxn_arcmux)?;
+    let vm = YearViewModel::get(&mut cxn, year)?;
     let body = vm.render().map_err(convert_render_error)?;
     Ok(Html(body))
 }
@@ -467,8 +484,11 @@ impl TryFrom<&rusqlite::Row<'_>> for RawSearchResult {
     }
 }
 
-async fn get_search(Query(query_args): Query<HashMap<String, String>>) -> Response {
-    let cxn = db_connection()?;
+async fn get_search(
+    Extension(cxn_arcmux): Extension<ConnectionArcMux>,
+    Query(query_args): Query<HashMap<String, String>>,
+) -> Response {
+    let cxn = lock_db(&cxn_arcmux)?;
     const QUERY: &str = r#"
         SELECT entries.rowid, entries.timestamp, snippet(entrytext, 0, '', '', '...', 32)
         FROM entrytext
@@ -506,8 +526,11 @@ struct Draft {
     body: String,
 }
 
-async fn post_draft(Form(draft): Form<Draft>) -> Result<String, AppError> {
-    let mut cxn = db_connection()?;
+async fn post_draft(
+    Extension(cxn_arcmux): Extension<ConnectionArcMux>,
+    Form(draft): Form<Draft>,
+) -> Result<String, AppError> {
+    let mut cxn = lock_db(&cxn_arcmux)?;
     const CREATE: &str = r#"
         INSERT INTO draft (draft) VALUES ($1)
     "#;
