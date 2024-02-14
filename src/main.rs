@@ -27,11 +27,11 @@ async fn main() {
         }
     };
 
-    let addr = SocketAddr::new(host, port);
+    info!("Connecting to database: {}", dbpath);
     let cxn = connect_and_init_db(&dbpath).expect("Error initializing database.");
+    let addr = SocketAddr::new(host, port);
     let app = newapp(cxn);
     info!("Listening on {}", addr);
-    // TODO static files
     axum::Server::bind(&addr)
         .serve(app.into_make_service())
         .await
@@ -42,7 +42,7 @@ const USAGE: &str = r#"
 web-diary-rs <dbpath> <host> <port>
 
   dbpath:   Path to the app's SQLite database
-  host:     Host to bind (e.g. 0.0.0.0, localhost)
+  host:     Host to bind (e.g. 0.0.0.0)
   port:     Port to bind (e.g. 8088)
 "#;
 
