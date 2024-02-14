@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     sync::{Arc, Mutex},
 };
 
@@ -18,13 +18,17 @@ use rusqlite::{Connection, OptionalExtension};
 async fn main() {
     pretty_env_logger::init();
     info!("Initializing");
-    {}
-    const DBPATH: &str = "diary.sqlite3";
-    const HOST: &str = "0.0.0.0";
-    const PORT: u16 = 62336;
 
-    let addr = SocketAddr::new(HOST.parse().unwrap(), PORT);
-    let cxn = connect_and_init_db(DBPATH).expect("Error initializing database.");
+    let (dbpath, host, port) = match get_parameters() {
+        Ok(params) => params,
+        Err(msg) => {
+            eprintln!("{}", msg);
+            std::process::exit(1);
+        }
+    };
+
+    let addr = SocketAddr::new(host, port);
+    let cxn = connect_and_init_db(&dbpath).expect("Error initializing database.");
     let app = newapp(cxn);
     info!("Listening on {}", addr);
     // TODO static files
@@ -32,6 +36,31 @@ async fn main() {
         .serve(app.into_make_service())
         .await
         .expect("Failed to start server");
+}
+
+const USAGE: &str = r#"
+web-diary-rs <dbpath> <host> <port>
+
+  dbpath:   Path to the app's SQLite database
+  host:     Host to bind (e.g. 0.0.0.0, localhost)
+  port:     Port to bind (e.g. 8088)
+"#;
+
+fn get_parameters() -> Result<(String, IpAddr, u16), &'static str> {
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() != 4 {
+        return Err(USAGE);
+    }
+    let dbpath = args[1].clone();
+    let host = match args[2].parse() {
+        Ok(host) => host,
+        _ => return Err(USAGE),
+    };
+    let port = match args[3].parse() {
+        Ok(port) => port,
+        _ => return Err(USAGE),
+    };
+    Ok((dbpath, host, port))
 }
 
 fn connect_and_init_db(dbpath: &str) -> Result<rusqlite::Connection, String> {
