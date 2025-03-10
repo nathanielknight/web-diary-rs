@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     net::{IpAddr, SocketAddr},
+    str::FromStr,
     sync::{Arc, Mutex},
 };
 
@@ -12,7 +13,7 @@ use axum::{
 };
 use chrono::{DateTime, NaiveDate, Utc};
 use log::{error, info};
-use rusqlite::{Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
@@ -85,6 +86,15 @@ fn connect_and_init_db(dbpath: &str) -> Result<rusqlite::Connection, String> {
                 draft TEXT NOT NULL
             )
         "##,
+        r##"
+            CREATE TABLE IF NOT EXISTS encryptionkeys
+            (
+                keyid TEXT NOT NULL,
+                key BLOB NOT NULL,
+                nonce BLOB NOT NULL,
+                created_at TEXT NOT NULL
+            )
+        "##,
     ];
     for stmt in init_statements {
         cxn.execute(stmt, [])
@@ -115,9 +125,9 @@ fn newapp(cxn: rusqlite::Connection) -> axum::Router {
         .layer(Extension(cxn_arcmut))
 }
 
-pub(crate) type AppError = (StatusCode, String);
-
-type Response = Result<Html<String>, AppError>;
+type AppError = (StatusCode, String);
+type AppResult<T> = Result<T, AppError>;
+type Response = AppResult<Html<String>>;
 
 struct Entry {
     id: u32,
@@ -143,7 +153,7 @@ impl Entry {
 }
 
 struct RawEntry {
-    id: u32,
+    keyid: u32,
     date: String,
     timestamp: u64,
     body: String,
@@ -152,7 +162,7 @@ struct RawEntry {
 impl RawEntry {
     fn from_row(r: &rusqlite::Row) -> rusqlite::Result<Self> {
         let entry = RawEntry {
-            id: r.get(0)?,
+            keyid: r.get(0)?,
             date: r.get(1)?,
             timestamp: r.get(2)?,
             body: r.get(3)?,
@@ -178,7 +188,7 @@ impl TryInto<Entry> for RawEntry {
         };
 
         let entry = Entry {
-            id: self.id,
+            id: self.keyid,
             date: NaiveDate::parse_from_str(&self.date, "%Y-%m-%d").map_err(convert_parse_error)?,
             timestamp,
             body: self.body,
@@ -273,12 +283,22 @@ async fn get_index(Extension(cxn_arcmux): Extension<ConnectionArcMux>) -> Respon
 #[template(path = "new.html")]
 struct NewEntryViewModel {
     draft: String,
+    keyid: Uuid,
+    base64_key: String,
+    base64_nonce: String,
 }
 
 async fn get_new_entry(Extension(cxn_arcmux): Extension<ConnectionArcMux>) -> Response {
     let mut cxn = lock_db(&cxn_arcmux)?;
     let draft = get_draft(&mut cxn)?.unwrap_or_else(String::new);
-    let vm = NewEntryViewModel { draft };
+    let encryptionkey = EncryptionKey::generate();
+    encryptionkey.save(&mut cxn)?;
+    let vm = NewEntryViewModel {
+        draft,
+        keyid: encryptionkey.keyid,
+        base64_key: encryptionkey.base64_key(),
+        base64_nonce: encryptionkey.base64_nonce(),
+    };
     vm.render().map_err(convert_render_error).map(Html::from)
 }
 
@@ -584,4 +604,73 @@ fn get_draft(cxn: &mut Connection) -> Result<Option<String>, AppError> {
     cxn.query_row(GET, [], |r| r.get(0))
         .optional()
         .map_err(convert_db_error)
+}
+
+use aes_gcm::{aead::OsRng, AeadCore, Aes256Gcm, KeyInit};
+use uuid::Uuid;
+
+struct EncryptionKey {
+    keyid: Uuid,
+    key: [u8; 32],
+    nonce: [u8; 12],
+}
+
+impl EncryptionKey {
+    fn generate() -> Self {
+        let key = Aes256Gcm::generate_key(OsRng);
+        let nonce = Aes256Gcm::generate_nonce(OsRng);
+        Self {
+            keyid: Uuid::new_v4(),
+            key: key.into(),
+            nonce: nonce.into(),
+        }
+    }
+
+    fn save(&self, cxn: &mut Connection) -> AppResult<()> {
+        const INSERT: &str = r#"
+            INSERT INTO encryptionkeys (keyid, key, nonce, created_at) VALUES ($1, $2, $3, datetime('now'))
+        "#;
+        cxn.execute(
+            INSERT,
+            params![self.keyid.to_string(), self.key, self.nonce],
+        )
+        .map_err(convert_db_error)?;
+        Ok(())
+    }
+
+    fn get(cxn: &mut Connection, keyid: &Uuid) -> AppResult<Self> {
+        Self::remove_outdated(cxn)?;
+
+        const SELECT: &str = r#"
+            SELECT FROM encryptionkeys (keyid, key, nonce) WHERE keyid= $1
+        "#;
+        cxn.query_row(SELECT, params![keyid.to_string()], |row| {
+            let rawkeyid: String = row.get(0)?;
+            let key: [u8; 32] = row.get(1)?;
+            let nonce = row.get(2)?;
+
+            let keyid = Uuid::from_str(&rawkeyid)
+                .map_err(|e| rusqlite::types::FromSqlError::InvalidType)?;
+            Ok(Self { keyid, key, nonce })
+        })
+        .map_err(convert_db_error)
+    }
+
+    fn remove_outdated(cxn: &mut Connection) -> AppResult<()> {
+        const CLEANUP: &str = r#"
+            DELETE FROM encryptionkeys WHERE created_at < datetime('now', '-30 days')
+        "#;
+        cxn.execute(CLEANUP, []).map_err(convert_db_error)?;
+        Ok(())
+    }
+
+    fn base64_key(&self) -> String {
+        use base64::prelude::*;
+        BASE64_STANDARD.encode(self.key)
+    }
+
+    fn base64_nonce(&self) -> String {
+        use base64::prelude::*;
+        BASE64_STANDARD.encode(self.nonce)
+    }
 }
